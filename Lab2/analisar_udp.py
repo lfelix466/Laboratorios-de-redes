@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Gera os graficos e uma analise do trafego DNS sobre UDP.
-
-Uso:
-    python analisar_udp.py files/udp-capture-lucas-felix.pcapng
-"""
+"""Gera os graficos e uma analise do trafego DNS sobre UDP. """
 
 from __future__ import annotations
 
@@ -55,6 +51,7 @@ def select_target_names(packets: list[Any]) -> list[str]:
 
 
 def find_rtt_samples(packets: list[Any], target_names: list[str]) -> list[tuple[str, float]]:
+    # A chave da análise DNS é emparelhar cada consulta com a resposta correta usando ID, nome,
     queries: dict[tuple[int, str, str, str, int, int], float] = {}
     samples: list[tuple[str, float]] = []
     target_set = set(target_names)
@@ -82,6 +79,7 @@ def find_rtt_samples(packets: list[Any], target_names: list[str]) -> list[tuple[
 
 
 def tcp_option_size(packets: list[Any]) -> tuple[int, int]:
+    # A análise do TCP usa dataofs para medir o tamanho do cabecalho e subtrai os 20 bytes fixos
     sizes = [int(packet[TCP].dataofs) * 4 for packet in packets if TCP in packet and packet[TCP].dataofs]
     if not sizes:
         raise RuntimeError("Nenhum cabecalho TCP com tamanho decodificado foi encontrado.")
@@ -127,45 +125,17 @@ def plot_header_sizes(tcp_options: int, path: Path) -> None:
     plt.close()
 
 
-def write_report(path: Path, capture_path: Path, samples: list[tuple[str, float]], tcp_header: int, tcp_options: int) -> None:
-    fastest = min(samples, key=lambda item: item[1])
-    slowest = max(samples, key=lambda item: item[1])
-    name_list = ", ".join(name.removeprefix("https://") for name, _ in samples)
-    path.write_text(f"""# Analise do trafego UDP
-
-Arquivo analisado: `{capture_path}`  
-Ferramenta: Python com `scapy` e `matplotlib`.
-
-Dominios alvo: {name_list}
-
-## 1. RTT das consultas DNS
-
-![RTT DNS](01_rtt_dns.png)
-
-O RTT foi calculado como a diferenca entre o timestamp da consulta DNS e o timestamp da resposta correspondente. A associacao usou o ID da transacao DNS, o nome consultado, as portas UDP e os enderecos IP invertidos.
-
-A consulta com maior RTT foi **{slowest[0].removeprefix("https://")}**, com **{slowest[1]:.2f} ms**. A menor foi **{fastest[0].removeprefix("https://")}**, com **{fastest[1]:.2f} ms**. A diferenca pode ser explicada pelo cache do resolvedor local, pela necessidade de consultar servidores autoritativos, pela localizacao/topologia desses servidores e pela carga ou fila da rede no instante da captura. O grafico mede o caminho ate o resolvedor `192.168.15.1`; portanto, nao identifica sozinho qual desses fatores dominou.
-
-## 2. Campos dos cabecalhos UDP e TCP
-
-![Cabecalhos](02_tamanho_campos_udp_tcp.png)
-
-O cabecalho UDP tem apenas quatro campos de 2 bytes: portas de origem e destino, comprimento e checksum, totalizando **8 bytes**. No TCP capturado, os campos equivalentes de portas e checksum tambem tem 2 bytes, mas o cabecalho inclui sequencia (4), ACK (4), flags/reservado (2), janela (2), ponteiro urgente (2) e opcoes. O tamanho TCP observado com maior frequencia foi **{tcp_header} bytes**, dos quais **{tcp_options} bytes** sao opcoes.
-
-Assim, UDP nao possui numeracao de sequencia, confirmacao, janela, flags de controle ou ponteiro urgente. Essa ausencia revela a simplicidade e baixo overhead do UDP: confiabilidade, ordenacao, retransmissao e controle de fluxo ficam a cargo da aplicacao, enquanto o TCP implementa esses mecanismos no proprio transporte.
-""", encoding="utf-8")
-
-
 def analyze(capture_path: Path, output_dir: Path, tcp_capture: Path) -> None:
     packets = rdpcap(str(capture_path))
     tcp_packets = rdpcap(str(tcp_capture))
     target_names = select_target_names(packets)
     samples = find_rtt_samples(packets, target_names)
     tcp_header, tcp_options = tcp_option_size(tcp_packets)
+    # A geração do relatório depende de três peças: filtragem do alvo, medição de RTT DNS e comparação
+    # do overhead do cabeçalho TCP em relação ao UDP. Essas são as informações relevantes do experimento.
     output_dir.mkdir(parents=True, exist_ok=True)
     plot_rtt(samples, output_dir / "01_rtt_dns.png")
     plot_header_sizes(tcp_options, output_dir / "02_tamanho_campos_udp_tcp.png")
-    write_report(output_dir / "analise_udp.md", capture_path, samples, tcp_header, tcp_options)
     print("RTTs: " + ", ".join(f"{name}={rtt:.2f} ms" for name, rtt in samples))
     print(f"Cabecalho TCP mais frequente: {tcp_header} bytes ({tcp_options} bytes de opcoes)")
     print(f"Arquivos gerados em: {output_dir}")
